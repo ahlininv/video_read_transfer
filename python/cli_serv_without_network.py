@@ -1,7 +1,4 @@
-import cv2
-import numpy as np
-import socket
-import sys
+
 try:
     from .tests.unittests import TestPackUnpack
 except ModuleNotFoundError:
@@ -10,6 +7,7 @@ try:
     from .tests.unittests import TestUtils
 except ModuleNotFoundError:
     from tests.unittests import TestUtils
+
 
 if __name__ == "__main__":
     tutils = TestUtils()

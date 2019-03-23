@@ -1,13 +1,25 @@
+
+# ATTENTION: runnable from python/ and from python/tests/, else cannot find anything.
+
 import numpy as np
 from unittest import TestCase
 import cv2
 
 import sys
-sys.path.append("..")
-from utils import serialize_frame, deserialize_frame
+# sys.path.append("..")
+try:
+    from utils import serialize_frame, deserialize_frame
+    from utils import VideoStream
+except ModuleNotFoundError:
+    from ..utils import serialize_frame, deserialize_frame
+    from ..utils import VideoStream
+
 import pickle
 import struct
+import os
+from threading import Thread
 
+test_video_path = "test_video.avi"
 
 class TestUtils(TestCase):
     def test_serialize_deserialize3d(self):
@@ -25,7 +37,7 @@ class TestUtils(TestCase):
 
     def test_serialize_deserialize2d(self):
         frame = np.array([[2, 1], [2, 1], [2, 1], [2, 1]])
-        print("shape:", frame.shape)
+        # print("shape:", frame.shape)
         serialized = serialize_frame(frame)
         deserialized = deserialize_frame(serialized, frame.dtype.name, frame.shape[0] * frame.shape[1], frame.shape)
         # print("serialized:", serialized)
@@ -36,7 +48,11 @@ class TestUtils(TestCase):
 
 class TestPackUnpack(TestCase):
     def setUp(self):
-        self.cap = cv2.VideoCapture("test_video.avi")
+        self.cap = cv2.VideoCapture(test_video_path)
+        if not self.cap.isOpened():
+            self.cap = cv2.VideoCapture(os.path.join("tests", test_video_path))
+        if not self.cap.isOpened():
+            raise Exception("Cannot open video in %s" % os.path.join(os.path.abspath("."), test_video_path))
 
     def tearDown(self):
         self.cap.release()
@@ -93,7 +109,6 @@ class TestPackUnpack(TestCase):
             cv2.imshow('frame1', frame)
 
     def test_size_shape_type_and_data_np_tobytes(self):
-        # self.cap = cv2.VideoCapture("test_video.avi")
         self.assertTrue(self.cap.isOpened())
         while self.cap.isOpened():
             ret, frame = self.cap.read()
@@ -148,5 +163,28 @@ class TestPackUnpack(TestCase):
 
             cv2.imshow('decoded_frame', decoded_frame)
 
-class TestStreamNoNetwork(TestCase):
-    pass
+
+class TestVideoStream(TestCase):
+    def setUp(self):
+        path = test_video_path
+        if not os.path.exists(path):
+            path = os.path.join("tests", path)
+        if not os.path.exists(path):
+            path = os.path.join("python", path)
+        if not os.path.exists(path):
+            raise Exception("test video not found. check path and run tests from root of repository, python/, python/tests/")
+        self.stream = VideoStream(path)
+        self.stream.start()
+
+    def tearDown(self):
+        self.stream.stop()
+
+    def test_video_stream(self):
+        self.assertTrue(self.stream.started)
+        import time
+        time.sleep(0.3)
+        # self.assertTrue(self.stream.full())
+        for i in range(70):
+            frame = self.stream.read()
+            self.assertTrue(frame is not None)
+        self.stream.stop()
