@@ -7,7 +7,7 @@ import cv2
 from queue import Queue
 from queue import Full  # it's Queue exception
 from threading import Condition, RLock, Thread
-import time
+import abc
 
 
 def deserialize_frame(frame_bytes, dtype_name, frame_bytes_len, shape):
@@ -26,27 +26,14 @@ def serialize_frame(frame):
     return frame.tobytes()
 
 
-class VideoStream:
-    def __init__(self, path, queue_size=50):
-        self.source = cv2.VideoCapture(path)
-        self.max_deque_size = 5
-
+class ThreadWorker(metaclass=abc.ABCMeta):
+    def __init__(self):
         self.working_guard = RLock()
         self.working = False
-
-        self.queue_cv = Condition()
-        self.read_frames_queue = Queue(self.max_deque_size)
-
-
-    def __del__(self):
-        self.source.release()
 
     def started(self):
         with self.working_guard:
             return self.working
-
-    def full(self):
-        return self.read_frames_queue.full()
 
     def worker_thread(self):
         while True:
@@ -64,6 +51,26 @@ class VideoStream:
     def stop(self):
         with self.working_guard:
             self.working = False
+
+    @abc.abstractmethod
+    def work_iteration(self):
+        pass
+
+
+class VideoStream(ThreadWorker):
+    def __init__(self, path, queue_size=50):
+        ThreadWorker.__init__(self)
+        self.source = cv2.VideoCapture(path)
+        self.max_deque_size = 5
+
+        self.queue_cv = Condition()
+        self.read_frames_queue = Queue(self.max_deque_size)
+
+    def full(self):
+        return self.read_frames_queue.full()
+
+    def __del__(self):
+        self.source.release()
 
     def work_iteration(self):
         assert(self.source.isOpened())
