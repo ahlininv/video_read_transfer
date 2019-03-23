@@ -5,21 +5,24 @@ import numpy as np
 from unittest import TestCase
 import cv2
 
-import sys
-# sys.path.append("..")
 try:
     from utils import serialize_frame, deserialize_frame
     from utils import VideoStream
+    from utils import VideoScreen
 except ModuleNotFoundError:
     from ..utils import serialize_frame, deserialize_frame
     from ..utils import VideoStream
+    from ..utils import VideoScreen
+
 
 import pickle
 import struct
 import os
 from threading import Thread
 
+
 test_video_path = "test_video.avi"
+
 
 class TestUtils(TestCase):
     def test_serialize_deserialize3d(self):
@@ -188,3 +191,8 @@ class TestVideoStream(TestCase):
             frame = self.stream.read()
             self.assertTrue(frame is not None)
         self.stream.stop()
+
+    def test_video_stream_video_screen(self):
+        screen = VideoScreen()
+        screen.set_source(self.stream)
+

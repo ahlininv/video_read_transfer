@@ -51,6 +51,7 @@ class ThreadWorker(metaclass=abc.ABCMeta):
     def stop(self):
         with self.working_guard:
             self.working = False
+            self.thread.join()
 
     @abc.abstractmethod
     def work_iteration(self):
@@ -91,6 +92,22 @@ class VideoStream(ThreadWorker, FramesProducer):
                     self.queue_cv.notify()
             except Full as e:
                 pass
+
+
+class VideoScreen(ThreadWorker):
+    def __init__(self):
+        ThreadWorker.__init__(self)
+        self.frame_source = None
+
+    def set_source(self, source):
+        assert(issubclass(source, FramesProducer))
+        self.frame_source = source
+
+    def work_iteration(self):
+        if cv2.waitKey(20) & 0xFF == ord('q'):
+            self.stop()
+        frame = self.frame_source.read()
+        cv2.imshow('frame1', frame)
 
 
 # for 2 streams of sending
