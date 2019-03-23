@@ -57,14 +57,24 @@ class ThreadWorker(metaclass=abc.ABCMeta):
         pass
 
 
-class VideoStream(ThreadWorker):
+class FramesProducer:
+    def __init__(self, queue_size):
+        self.queue_cv = Condition()
+        self.max_deque_size = queue_size
+        self.read_frames_queue = Queue(self.max_deque_size)
+
+    def read(self):  # we use notify(1 by default), so there's no other reader that could see queue empty.
+        with self.queue_cv:
+            while self.read_frames_queue.empty():
+                self.queue_cv.wait()
+            return self.read_frames_queue.get()
+
+
+class VideoStream(ThreadWorker, FramesProducer):
     def __init__(self, path, queue_size=50):
         ThreadWorker.__init__(self)
+        FramesProducer.__init__(self, queue_size)
         self.source = cv2.VideoCapture(path)
-        self.max_deque_size = 5
-
-        self.queue_cv = Condition()
-        self.read_frames_queue = Queue(self.max_deque_size)
 
     def full(self):
         return self.read_frames_queue.full()
@@ -81,12 +91,6 @@ class VideoStream(ThreadWorker):
                     self.queue_cv.notify()
             except Full as e:
                 pass
-
-    def read(self):  # we use notify(1 by default), so there's no other reader that could see queue empty.
-        with self.queue_cv:
-            while self.read_frames_queue.empty():
-                self.queue_cv.wait()
-            return self.read_frames_queue.get()
 
 
 # for 2 streams of sending
