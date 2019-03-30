@@ -51,11 +51,11 @@ def serialize_frame(frame):
     return frame.tobytes()
 
 
-def packet_pack(frame_bytes, dtype_name, shape):
-    packet_size = len(frame_bytes) + struct.calcsize("q 3q 10s")
+def packet_pack(frame_bytes, dtype_name, shape, packet_num):
+    packet_size = len(frame_bytes) + struct.calcsize("q q 3q 10s")
     encoding_frame_bytes_size = len(frame_bytes)
-    encoding_packet_fmt = "q 3q 10s %ds" % encoding_frame_bytes_size
-    stream_to_network = struct.pack(encoding_packet_fmt, packet_size, shape[0],
+    encoding_packet_fmt = "q q 3q 10s %ds" % encoding_frame_bytes_size
+    stream_to_network = struct.pack(encoding_packet_fmt, packet_size, packet_num, shape[0],
                                     shape[1],
                                     shape[2] if len(shape) == 3 else -1,
                                     ("%10s" % dtype_name).encode('utf-8'),
@@ -64,7 +64,7 @@ def packet_pack(frame_bytes, dtype_name, shape):
 
 
 def packet_unpack(packet_stream):
-    header_length = struct.calcsize("q 3q 10s")
+    header_length = struct.calcsize("q q 3q 10s")
     assert len(packet_stream) > header_length
     subheader_length = struct.calcsize("q")
     subheader = packet_stream[:subheader_length]
@@ -73,12 +73,12 @@ def packet_unpack(packet_stream):
     packet_stream = packet_stream[packet_size:]
 
     frame_bytes_len = packet_size - header_length
-    packet_fmt = "q 3q 10s %ds" % frame_bytes_len
-    packet_size, shape0, shape1, shape2, frame_dtype, frame_bytes = \
+    packet_fmt = "q q 3q 10s %ds" % frame_bytes_len
+    packet_size, packet_num, shape0, shape1, shape2, frame_dtype, frame_bytes = \
         struct.unpack(packet_fmt, decode_packet)
     frame_shape = (shape0, shape1, shape2) if shape2 != -1 else (shape0, shape1)
     frame_dtype = frame_dtype.decode('utf-8').strip()
-    return packet_size, frame_bytes_len, frame_shape, frame_dtype, frame_bytes, frame_bytes_len
+    return packet_size, packet_num, frame_bytes_len, frame_shape, frame_dtype, frame_bytes, frame_bytes_len
 
 
 def guess_path(path):
@@ -123,7 +123,7 @@ class ThreadWorker(metaclass=abc.ABCMeta):
     def stop(self):
         with self.working_guard:
             self.working = False
-            print("thread alive: ", self.thread.isAlive())
+            print("stopping thread ", self.thread.name)
 
     def join(self):
         assert threading.current_thread().name != self.thread.name
@@ -168,7 +168,7 @@ class VideoStream(ThreadWorker, Producer):
             if size_locked(self.frames, self.out_elems_lock) == self.max_deque_size:
                 return
             ret, frame = self.source.read()
-            print(self.name, " ", (ret, frame is not None))
+            # print(self.name, " ", (ret, frame is not None))
             if not ret and frame is None:  # end of video
                 push_back(self.frames, self.out_elems_lock, None)  # to flush all threads, too
                 self.stop()
@@ -176,7 +176,7 @@ class VideoStream(ThreadWorker, Producer):
 
             if frame is None:  # True, None --> empty queue, try again
                 return
-            print(self.name, "+")
+            # print(self.name, "+")
             push_back(self.frames, self.out_elems_lock, frame)  # True, frame is not None: normal frame
 
 
@@ -225,11 +225,13 @@ class StreamProcessor(ThreadWorker, Producer, metaclass=abc.ABCMeta):
 class NetworkEnoder(StreamProcessor):
     def __init__(self, name, source=None):
         StreamProcessor.__init__(self, name, source)
+        self.packet_num = 0
 
     def process(self, frame_to_encode):
         assert frame_to_encode is not None
         encoded_frame_bytes = serialize_frame(frame_to_encode)
-        stream_to_network = packet_pack(encoded_frame_bytes, frame_to_encode.dtype.name, frame_to_encode.shape)
+        stream_to_network = packet_pack(encoded_frame_bytes, frame_to_encode.dtype.name, frame_to_encode.shape, self.packet_num)
+        self.packet_num += 1
         return stream_to_network
 
 
@@ -241,10 +243,11 @@ class NetworkDecoder(StreamProcessor):
     def process(self, packet_stream):
         # print("process")
         assert packet_stream is not None
-        decoding_packet_size, decoding_frame_bytes_len, frame_shape, frame_dtype, decoded_frame_bytes, \
-        decoding_frame_bytes_len = packet_unpack(packet_stream)
+        decoding_packet_size, decoding_packet_num, decoding_frame_bytes_len, frame_shape, frame_dtype, decoded_frame_bytes, \
+            decoding_frame_bytes_len = packet_unpack(packet_stream)
         decoded_frame = deserialize_frame(decoded_frame_bytes, frame_dtype,
                                           decoding_frame_bytes_len, frame_shape)
+        print("deoded " , decoding_packet_num, "th packet")
         return decoded_frame
 
 
@@ -279,7 +282,7 @@ class Connection:
         packet_size = 10000
         while(sended_size < len(data_bytes)):
             sended = self.sock.send(data_bytes[sended_size:min(sended_size+10000, len(data_bytes))])
-            print("sended: ", sended)
+            # print("sended: ", sended)
             sended_size += sended
         print("Frame sended, size ", len(data_bytes))
 
@@ -321,6 +324,7 @@ class Connection:
         return payload_data
 
     def server_run(self):
+        print("server run on ", self.ip, ":", self.port)
         self.sock.bind((self.ip, self.port))
         print('Socket bind complete')
         self.sock.listen(10)
@@ -367,7 +371,7 @@ class NetworkSender(ThreadWorker, Connection):
         if not self.connected:
             return
 
-        print("send")
+        # print("send")
         self.send(frame)
 
 
@@ -396,13 +400,17 @@ class NetworkReceiver(ThreadWorker, Connection, Producer):
             push_back(self.frames, self.out_elems_lock, frame_bytes)
 
 
+class Muxer(StreamProcessor):
+    pass
+
+
 def run_video(source):
     assert source.isOpened()
-    # n = 0
+    n = 0
     while source.isOpened():
         ret, frame = source.read()
-        # n += 1
-        # print("read ", (ret, frame is not None), ", n = ", n)
+        n += 1
+        print("read ", (ret, frame is not None), ", n = ", n)
         if ret and frame is None:
                 continue
         if not ret and frame is None:

@@ -24,8 +24,9 @@ if __name__ == "__main__":
                 print("conn ", conn)
                 if not conn.working:
                     conn.join()
-                    print("joined ", conn)
+                    print("Finished monothread receiving ", conn)
                     server.server_connections.remove(conn)
+                    exit(0)
         with server.server_connections_lock:
             if server.server_connections:
                 receiver = server.server_connections[0]

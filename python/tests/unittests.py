@@ -109,6 +109,8 @@ class TestPackUnpack(TestCase):
 
     def test_size_shape_type_and_data_np_tobytes(self):
         self.assertTrue(self.cap.isOpened())
+        num_enc = 0
+        num_dec = 0
         while self.cap.isOpened():
             ret, frame = self.cap.read()
             if frame is None:
@@ -117,14 +119,15 @@ class TestPackUnpack(TestCase):
 
             frame_to_encode = gray
             encoded_frame_bytes = serialize_frame(frame_to_encode)
-            stream_to_network = packet_pack(encoded_frame_bytes, frame_to_encode.dtype.name, frame_to_encode.shape)
+            stream_to_network = packet_pack(encoded_frame_bytes, frame_to_encode.dtype.name, frame_to_encode.shape, num_enc)
+            num_enc += 1
 
             # Network was here=)
             stream_from_network = stream_to_network
             packet_stream = stream_from_network
             # Network finished here
 
-            decoding_packet_size, decoding_frame_bytes_len, frame_shape, frame_dtype, decoded_frame_bytes, \
+            decoding_packet_size, num_dec, decoding_frame_bytes_len, frame_shape, frame_dtype, decoded_frame_bytes, \
                 decoding_frame_bytes_len = packet_unpack(packet_stream)
             decoded_frame = deserialize_frame(decoded_frame_bytes, frame_dtype,
                                               decoding_frame_bytes_len, frame_shape)
@@ -218,7 +221,48 @@ class TestVideoStreamToScreen(TestCase):
         unpacker.start()
         run_video(unpacker)
 
+    def video_server_thread_func(self):
+        # single_thread_server.py
+        server = Server('localhost', 8089)
+        print("1", threading.enumerate())
+        server_thread = threading.Thread(target=server.server_run)
+        server_thread.start()
+        print("2", threading.enumerate())
+        while True:
+            with server.server_connections_lock:
+                for conn in server.server_connections:
+                    print("conn ", conn)
+                    if not conn.working:
+                        conn.join()
+                        print("Finished monothread receiving ", conn)
+                        server.server_connections.remove(conn)
+                        return
+            with server.server_connections_lock:
+                if server.server_connections:
+                    receiver = server.server_connections[0]
+                    print("server_connections connections")
+                    unpacker = NetworkDecoder("unpacker", receiver)
+                    unpacker.start()
+                    run_video(unpacker)
 
+    def video_client_thread_func(self):
+        # single_thread_client.py
+        # stream = FakeVideoSource()
+        stream = VideoStream("tests/test_video.avi", "videostream")
+        stream.start()
+        packer = NetworkEnoder("packer", stream)
+        packer.start()
+        a = NetworkSender("sender", 'localhost', 8089, packer)
+        a.start()
+
+    # def test_video_stream_with_network_monothread(self):
+    #     thread_server = Thread(target=self.video_server_thread_func)
+    #     thread_client = Thread(target=self.video_client_thread_func)
+    #
+    #     thread_server.start()
+    #     thread_client.start()
+    #     thread_client.join(10)
+    #     thread_server.join(10)
 
 
 

@@ -57,7 +57,7 @@ if __name__ == "__main__":
         # if cv2.waitKey(20) & 0xFF == ord('q'):
         #     break
         # cv2.imshow('frame',frame)
-        decoding_packet_size, decoding_frame_bytes_len, frame_shape, frame_dtype, decoded_frame_bytes, \
+        decoding_packet_size, decoding_packet_num, decoding_frame_bytes_len, frame_shape, frame_dtype, decoded_frame_bytes, \
             decoding_frame_bytes_len = packet_unpack(payload_data)
         decoded_frame = deserialize_frame(decoded_frame_bytes, frame_dtype,
                                           decoding_frame_bytes_len, frame_shape)
