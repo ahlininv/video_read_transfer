@@ -144,12 +144,12 @@ class Producer:
     def __init__(self, queue_size=20):
         self.out_elems_lock = Lock()
         self.max_deque_size = queue_size
-        self.frames = deque()
+        self.out_queues = deque()
 
     def read(self):
         with self.out_elems_lock:
-            if not empty_locked(self.frames, self.out_elems_lock):
-                frame = pop_front(self.frames, self.out_elems_lock)
+            if not empty_locked(self.out_queues, self.out_elems_lock):
+                frame = pop_front(self.out_queues, self.out_elems_lock)
             else:
                 return True, None  # means empty (we added this case to interface)
         if frame is None:
@@ -157,35 +157,41 @@ class Producer:
         return True, frame  # normal frame (do as cv2.VideoCapture)
 
 
-class VideoStream(ThreadWorker, Producer):
+class VideoStream(ThreadWorker):
     def __init__(self, path, name, queue_size=20):
         ThreadWorker.__init__(self, name)
-        Producer.__init__(self, queue_size)
+        self.producer = Producer(queue_size)
         self.source = cv2.VideoCapture(path)
 
     def work_iteration(self):
-        with self.out_elems_lock:
-            if size_locked(self.frames, self.out_elems_lock) == self.max_deque_size:
+        with self.producer.out_elems_lock:
+            if size_locked(self.producer.out_queues, self.producer.out_elems_lock) == self.producer.max_deque_size:
                 return
             ret, frame = self.source.read()
             # print(self.name, " ", (ret, frame is not None))
             if not ret and frame is None:  # end of video
-                push_back(self.frames, self.out_elems_lock, None)  # to flush all threads, too
+                push_back(self.producer.out_queues, self.producer.out_elems_lock, None)  # to flush all threads, too
                 self.stop()
                 return
 
             if frame is None:  # True, None --> empty queue, try again
                 return
             # print(self.name, "+")
-            push_back(self.frames, self.out_elems_lock, frame)  # True, frame is not None: normal frame
+            push_back(self.producer.out_queues, self.producer.out_elems_lock, frame)  # True, frame is not None: normal frame
+
+    def read(self):
+        return self.producer.read()
 
 
-class StreamProcessor(ThreadWorker, Producer, metaclass=abc.ABCMeta):
-    def __init__(self, name, source=None):
+class StreamProcessor(ThreadWorker, metaclass=abc.ABCMeta):
+    def __init__(self, name, source=None, max_queue_size=20):
         ThreadWorker.__init__(self, name)
-        Producer.__init__(self)
+        self.producer = Producer(max_queue_size)
         self.source = source
         # self.pr_i = 0
+
+    def read(self):
+        return self.producer.read()
 
     def subscribe(self, source):
         assert(isinstance(source, Producer))
@@ -197,14 +203,14 @@ class StreamProcessor(ThreadWorker, Producer, metaclass=abc.ABCMeta):
 
     def work_iteration(self):
         assert self.source , "worker withour source"
-        with self.out_elems_lock:
-            if size_locked(self.frames, self.out_elems_lock) == self.max_deque_size:
+        with self.producer.out_elems_lock:
+            if size_locked(self.producer.out_queues, self.producer.out_elems_lock) == self.producer.max_deque_size:
                 return
             ret, frame = self.source.read()
             # self.pr_i += 1
             # print(self.name, " ", (ret, frame is not None), ", frame ", self.pr_i)
             if not ret and frame is None:  # end of video
-                push_back(self.frames, self.out_elems_lock, None)  # to flush all threads, too
+                push_back(self.producer.out_queues, self.producer.out_elems_lock, None)  # to flush all threads, too
                 self.stop()
                 return
 
@@ -215,7 +221,7 @@ class StreamProcessor(ThreadWorker, Producer, metaclass=abc.ABCMeta):
             if self.process is not None:
                 frame = self.process(frame)
 
-            push_back(self.frames, self.out_elems_lock, frame)  # True, frame is not None: normal frame
+            push_back(self.producer.out_queues, self.producer.out_elems_lock, frame)  # True, frame is not None: normal frame
 
     @abc.abstractmethod
     def process(self, input_data):
@@ -375,11 +381,11 @@ class NetworkSender(ThreadWorker, Connection):
         self.send(frame)
 
 
-class NetworkReceiver(ThreadWorker, Connection, Producer):
+class NetworkReceiver(ThreadWorker, Connection):
     def __init__(self, name, ip, port, source=None, sock=None):
         print("NetworkReceiver running")
         ThreadWorker.__init__(self, name)
-        Producer.__init__(self)
+        self.producer = Producer(100000)  # very much, this class cannot wait.
         Connection.__init__(self, ip, port, sock)
         if source is not None:
             self.subscribe(source)
@@ -392,12 +398,15 @@ class NetworkReceiver(ThreadWorker, Connection, Producer):
         frame_bytes = self.receive_packet()
         if not frame_bytes:
             self.stop()
-            with self.out_elems_lock:
-                push_back(self.frames, self.out_elems_lock, None)
-        with self.out_elems_lock:
+            with self.producer.out_elems_lock:
+                push_back(self.producer.out_queues, self.producer.out_elems_lock, None)
+        with self.producer.out_elems_lock:
             if False:  # todo later!!! size_locked(self.frames, self.out_elems_lock) == self.max_deque_size:
                 return
-            push_back(self.frames, self.out_elems_lock, frame_bytes)
+            push_back(self.producer.out_queues, self.producer.out_elems_lock, frame_bytes)
+
+    def read(self):
+        return self.producer.read()
 
 
 class Muxer(StreamProcessor):
