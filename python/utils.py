@@ -161,8 +161,8 @@ class VideoStream(ThreadWorker):
     def __init__(self, path, name, queue_size=20, num_producers=1):
         ThreadWorker.__init__(self, name)
         self.producers_pool = [Producer(queue_size) for x in range(num_producers)]
-        self.source = cv2.VideoCapture(path)
         self.producer = self.producers_pool[0]
+        self.source = cv2.VideoCapture(path)
 
     def work_iteration(self):
         with self.producer.out_queue_lock:
@@ -185,14 +185,15 @@ class VideoStream(ThreadWorker):
 
 
 class StreamProcessor(ThreadWorker, metaclass=abc.ABCMeta):
-    def __init__(self, name, source=None, max_queue_size=20):
+    def __init__(self, name, source=None, max_queue_size=20, num_producers=1):
         ThreadWorker.__init__(self, name)
-        self.producer = Producer(max_queue_size)
+        self.producers_pool = [Producer(max_queue_size) for x in range(num_producers)]
+        self.producer = self.producers_pool[0]
         self.source = source
         # self.pr_i = 0
 
-    def read(self):
-        return self.producer.read()
+    def read(self, num_producer=0):
+        return self.producers_pool[num_producer].read()
 
     def subscribe(self, source):
         assert(isinstance(source, Producer))
@@ -254,7 +255,7 @@ class NetworkDecoder(StreamProcessor):
             decoding_frame_bytes_len = packet_unpack(packet_stream)
         decoded_frame = deserialize_frame(decoded_frame_bytes, frame_dtype,
                                           decoding_frame_bytes_len, frame_shape)
-        print("deoded " , decoding_packet_num, "th packet")
+        # print("deoded " , decoding_packet_num, "th packet")
         return decoded_frame
 
 
@@ -383,10 +384,11 @@ class NetworkSender(ThreadWorker, Connection):
 
 
 class NetworkReceiver(ThreadWorker, Connection):
-    def __init__(self, name, ip, port, source=None, sock=None):
+    def __init__(self, name, ip, port, source=None, sock=None, num_producers=1):
         print("NetworkReceiver running")
         ThreadWorker.__init__(self, name)
-        self.producer = Producer(100000)  # very much, this class cannot wait.
+        self.producers_pool = [Producer(100000) for x in range(num_producers)]  # very much, this class cannot wait.
+        self.producer = self.producers_pool[0]
         Connection.__init__(self, ip, port, sock)
         if source is not None:
             self.subscribe(source)
@@ -406,8 +408,8 @@ class NetworkReceiver(ThreadWorker, Connection):
                 return
             push_back(self.producer.out_queue, self.producer.out_queue_lock, frame_bytes)
 
-    def read(self):
-        return self.producer.read()
+    def read(self, num_producer=0):
+        return self.producers_pool[num_producer].read()
 
 
 class Muxer(StreamProcessor):
@@ -420,7 +422,7 @@ def run_video(source):
     while source.isOpened():
         ret, frame = source.read()
         n += 1
-        print("read ", (ret, frame is not None), ", n = ", n)
+        # print("read ", (ret, frame is not None), ", n = ", n)
         if ret and frame is None:
                 continue
         if not ret and frame is None:
