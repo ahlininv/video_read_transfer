@@ -19,6 +19,7 @@ from threading import Thread
 import time
 
 
+
 test_video_path = "test_video.avi"
 
 
