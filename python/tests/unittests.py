@@ -4,21 +4,19 @@
 import numpy as np
 from unittest import TestCase
 import cv2
+from queue import Queue, Full, Empty  # it's Queue exception
 
 try:
-    from utils import serialize_frame, deserialize_frame
-    from utils import VideoStream
-    from utils import VideoScreen
+    from utils import *
 except ModuleNotFoundError:
-    from ..utils import serialize_frame, deserialize_frame
-    from ..utils import VideoStream
-    from ..utils import VideoScreen
+    from ..utils import *
 
 
 import pickle
 import struct
 import os
 from threading import Thread
+import time
 
 
 test_video_path = "test_video.avi"
@@ -51,11 +49,8 @@ class TestUtils(TestCase):
 
 class TestPackUnpack(TestCase):
     def setUp(self):
-        self.cap = cv2.VideoCapture(test_video_path)
-        if not self.cap.isOpened():
-            self.cap = cv2.VideoCapture(os.path.join("tests", test_video_path))
-        if not self.cap.isOpened():
-            raise Exception("Cannot open video in %s" % os.path.join(os.path.abspath("."), test_video_path))
+        path = guess_path(test_video_path)
+        self.cap = cv2.VideoCapture(path)
 
     def tearDown(self):
         self.cap.release()
@@ -121,43 +116,16 @@ class TestPackUnpack(TestCase):
 
             frame_to_encode = gray
             encoded_frame_bytes = serialize_frame(frame_to_encode)
-            # print("format of payload: ", type(encoded_frame_bytes))
-            # print("frame size ", len(frame))
-            # print("encoded_frame_bytes size ", len(encoded_frame_bytes))
-
-            encoding_packet_size = len(encoded_frame_bytes) + struct.calcsize("q 3q 10s")
-            encoding_frame_bytes_size = len(encoded_frame_bytes)
-            # print("encoding_packet_size ", encoding_packet_size)
-            # print("encoding_frame_bytes_size ", encoding_frame_bytes_size)
-            encoding_packet_fmt = "q 3q 10s %ds" % encoding_frame_bytes_size
-            # print("encoding_packet_fmt ", encoding_packet_fmt)
-            stream_to_network = struct.pack(encoding_packet_fmt, encoding_packet_size, frame_to_encode.shape[0], frame_to_encode.shape[1],
-                                            frame_to_encode.shape[2] if len(frame_to_encode.shape) == 3 else -1, ("%10s" % frame_to_encode.dtype.name).encode('utf-8'),
-                                            encoded_frame_bytes)
+            stream_to_network = packet_pack(encoded_frame_bytes, frame_to_encode.dtype.name, frame_to_encode.shape)
 
             # Network was here=)
             stream_from_network = stream_to_network
             packet_stream = stream_from_network
             # Network finished here
 
-            header_length = struct.calcsize("q 3q 10s")
-            decode_subhdr_length = struct.calcsize("q")
-            decoding_packet_size = struct.unpack("q", packet_stream[:decode_subhdr_length])[0]
-            # print("decoding_packet_size ", decoding_packet_size)
-            decode_packet = packet_stream[:decoding_packet_size]
-            packet_stream = packet_stream[decoding_packet_size:]
-
-            # print("decoding_packet_size ", decoding_packet_size)
-            # print("payload_size ", payload_size)
-
-            decoding_frame_bytes_len = decoding_packet_size - header_length
-            decoding_packet_fmt = "q 3q 10s %ds" % decoding_frame_bytes_len
-            decoding_packet_size, shape0, shape1, shape2, frame_dtype, decoded_frame_bytes = struct.unpack(
-                decoding_packet_fmt, decode_packet)
-            # print("decoding_packet_fmt ", decoding_packet_fmt)
-            # print("frame size ", len(decoded_frame_bytes))
-            frame_shape = (shape0, shape1, shape2) if shape2 != -1 else (shape0, shape1)
-            decoded_frame = deserialize_frame(decoded_frame_bytes, frame_dtype.decode('utf-8').strip(),
+            decoding_packet_size, decoding_frame_bytes_len, frame_shape, frame_dtype, decoded_frame_bytes, \
+                decoding_frame_bytes_len = packet_unpack(packet_stream)
+            decoded_frame = deserialize_frame(decoded_frame_bytes, frame_dtype,
                                               decoding_frame_bytes_len, frame_shape)
 
             self.assertTrue (np.array_equiv(decoded_frame, gray))
@@ -169,30 +137,92 @@ class TestPackUnpack(TestCase):
 
 class TestVideoStream(TestCase):
     def setUp(self):
-        path = test_video_path
-        if not os.path.exists(path):
-            path = os.path.join("tests", path)
-        if not os.path.exists(path):
-            path = os.path.join("python", path)
-        if not os.path.exists(path):
-            raise Exception("test video not found. check path and run tests from root of repository, python/, python/tests/")
-        self.stream = VideoStream(path)
+        path = guess_path(test_video_path)
+        self.stream = VideoStream(path, "VideoStream")
         self.stream.start()
 
     def tearDown(self):
         self.stream.stop()
 
     def test_video_stream(self):
-        self.assertTrue(self.stream.started)
-        import time
-        time.sleep(0.3)
-        # self.assertTrue(self.stream.full())
-        for i in range(70):
-            frame = self.stream.read()
-            self.assertTrue(frame is not None)
+        self.assertTrue(self.stream.isOpened())
+        for i in range(50):  # there are more than 25 good frames in that video test_video.avi, all of them must be read
+            ret, frame = self.stream.read()
+            if i < 20:
+                self.assertTrue(ret)
+            if not ret:
+                self.assertTrue(frame is None)
+                break
         self.stream.stop()
 
-    def test_video_stream_video_screen(self):
-        screen = VideoScreen()
-        screen.set_source(self.stream)
+
+class TestVideoCaptureToScreen(TestCase):
+    def setUp(self):
+        path = guess_path(test_video_path)
+        if not os.path.exists(path):
+            raise Exception(
+                "test video not found. check path and run tests from root of repository, python/, python/tests/")
+        self.stream = cv2.VideoCapture(path)
+
+    def tearDown(self):
+        pass
+
+    def test_cv2_display(self):
+        run_video(self.stream)
+
+    def test_cv2_videostream_display(self):
+        run_video(self.stream)
+
+
+class FakeVideoSource():
+    def __init__(self):
+        self.frame_n = 0
+        self.frame = np.array([[[1, 1, 1], [2, 2, 2]], [[1, 1, 1], [2, 2, 2]], [[1, 1, 1], [2, 2, 2]]], dtype=np.uint8)
+
+    def isOpened(self):
+        return True
+
+    def read(self):
+        self.frame_n += 1
+        if self.frame_n < 100:
+            return True, self.frame
+        else:
+            return False, None
+
+    def release(self):
+        pass
+
+
+
+class TestVideoStreamToScreen(TestCase):
+    def setUp(self):
+        path = guess_path(test_video_path)
+        if not os.path.exists(path):
+            raise Exception(
+                "test video not found. check path and run tests from root of repository, python/, python/tests/")
+        self.stream = VideoStream(path, "VideoStream", 10)
+        self.stream.start()
+
+    def tearDown(self):
+        self.stream.stop()
+
+    def test_video_stream_display(self):
+        run_video(self.stream)
+
+
+    def test_video_stream_serial_deserial_display(self):
+        packer = NetworkEnoder("packer", self.stream)
+        packer.start()
+        unpacker = NetworkDecoder("unpacker", packer)
+        unpacker.start()
+        run_video(unpacker)
+
+
+
+
+
+
+
+
+
 
