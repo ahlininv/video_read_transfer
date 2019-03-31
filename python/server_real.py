@@ -31,7 +31,7 @@ if __name__ == "__main__":
             if server.server_connections:
                 receiver = server.server_connections[0]
                 print("server_connections connections")
-                unpacker = NetworkDecoder("unpacker", receiver)
+                unpacker = NetworkDecoder("unpacker", [receiver])
                 unpacker.start()
                 run_video(unpacker)
 
