@@ -197,7 +197,6 @@ class FakeVideoSource():
         pass
 
 
-
 class TestVideoStreamToScreen(TestCase):
     def setUp(self):
         path = guess_path(test_video_path)
@@ -215,9 +214,9 @@ class TestVideoStreamToScreen(TestCase):
 
 
     def test_video_stream_serial_deserial_display(self):
-        packer = NetworkEnoder("packer", self.stream)
+        packer = NetworkEnoder("packer", [self.stream])
         packer.start()
-        unpacker = NetworkDecoder("unpacker", packer)
+        unpacker = NetworkDecoder("unpacker", [packer])
         unpacker.start()
         run_video(unpacker)
 
@@ -241,7 +240,7 @@ class TestVideoStreamToScreen(TestCase):
                 if server.server_connections:
                     receiver = server.server_connections[0]
                     print("server_connections connections")
-                    unpacker = NetworkDecoder("unpacker", receiver)
+                    unpacker = NetworkDecoder("unpacker", [receiver])
                     unpacker.start()
                     run_video(unpacker)
 
@@ -252,7 +251,7 @@ class TestVideoStreamToScreen(TestCase):
         stream.start()
         packer = NetworkEnoder("packer", stream)
         packer.start()
-        a = NetworkSender("sender", 'localhost', 8089, packer)
+        a = NetworkSender("sender", 'localhost', 8089, [packer])
         a.start()
 
     # def test_video_stream_with_network_monothread(self):
