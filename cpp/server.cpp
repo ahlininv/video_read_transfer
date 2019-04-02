@@ -22,8 +22,12 @@ std::mutex video_guard;
  uint64_t timestamp = 0;
 
 
+void read_file(std::string& filename, std::vector<std::vector<std::shared_ptr<Mat> > >& frame_queues) {
+
+}
+
 void play_to_network(int socket, int thread_id/*, VideoCapture cap*/) {
-    Mat frame;
+    std::shared_ptr<Mat> frame(new Mat());
 
     {
         std::lock_guard<std::mutex> lock(video_guard);
@@ -38,19 +42,19 @@ void play_to_network(int socket, int thread_id/*, VideoCapture cap*/) {
         std::lock_guard<std::mutex> lock(video_guard);
         if (timestamp % 2 != thread_id)
             continue;
-        bool ret = source.read(frame);
+        bool ret = source.read(*frame);
         std::cerr << "thread " << thread_id << "reads " << timestamp << " frame\n";
         ++timestamp;
 
-        if (!ret && frame.empty()) {
+        if (!ret && frame->empty()) {
             std::cerr << "Video is over\n";
             exit(0);
         }
 
         //send processed image
-        const Mat& frame_to_send = frame;
-        int frame_length = frame_to_send.total() * frame_to_send.elemSize();
-        if ((bytes = send(socket, frame_to_send.data, frame_length, 0)) < 0) {
+         std::shared_ptr<Mat> frame_to_send = frame;
+        int frame_length = frame_to_send->total() * frame_to_send->elemSize();
+        if ((bytes = send(socket, frame_to_send->data, frame_length, 0)) < 0) {
              std::cerr << "bytes = " << bytes << std::endl;
              break;
         }
