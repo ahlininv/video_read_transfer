@@ -1,7 +1,6 @@
 /**
  * OpenCV video streaming over TCP/IP
- * Server: Captures video from a webcam and send it to a client
- * by Isaac Maia
+ * Server: Grabs video from source and send it to a client
  */
 
 #include "opencv2/opencv.hpp"
@@ -13,48 +12,44 @@
 #include <unistd.h>
 #include <string.h>
 #include <thread>
+#include <mutex>
 
 using namespace cv;
 
 //VideoCapture cap("/home/ahlininv/Desktop/tantum.avi"); // open the default camera
-VideoCapture cap("./../../python/tests/test_video.avi"); // open the default camera
+std::mutex video_guard;
+ VideoCapture source("./../../python/tests/test_video.avi"); // open the default camera
+ uint64_t timestamp = 0;
 
 
 void play_to_network(int socket, int thread_id/*, VideoCapture cap*/) {
-    Mat frame = Mat::zeros(360 , 640, CV_8UC3);
-    Mat frame_gray;
+    Mat frame;
 
-    // make it continuous
-    if (!frame.isContinuous()) {
-        frame = frame.clone();
-        frame_gray = frame.clone();
-    }
-
-    int frame_length = frame.total() * frame.elemSize();
-    std::cout << "Image Size:" << frame.total() * frame.elemSize() << " " << frame.channels() << std::endl;
-
-    // Check if camera opened successfully
-    if(!cap.isOpened()) {
-        std::cout << "Error opening video stream or file" << std::endl;
-        exit(-1);
+    {
+        std::lock_guard<std::mutex> lock(video_guard);
+        if(!source.isOpened()) {
+            std::cout << "Error opening video stream or file" << std::endl;
+            exit(-1);
+        }
     }
 
     int bytes = 0;
     while (1) {
-        cap >> frame;
-        if (frame.empty()) {
+        std::lock_guard<std::mutex> lock(video_guard);
+        if (timestamp % 2 != thread_id)
+            continue;
+        bool ret = source.read(frame);
+        std::cerr << "thread " << thread_id << "reads " << timestamp << " frame\n";
+        ++timestamp;
+
+        if (!ret && frame.empty()) {
             std::cerr << "Video is over\n";
             exit(0);
         }
 
-//        std::cout << "Image Size:" << frame.total() * frame.elemSize() << " " << frame.channels() << std::endl;
-
-        // process image if needed
-        cvtColor(frame, frame_gray, CV_BGR2GRAY);
-
         //send processed image
         const Mat& frame_to_send = frame;
-        frame_length = frame_to_send.total() * frame_to_send.elemSize();
+        int frame_length = frame_to_send.total() * frame_to_send.elemSize();
         if ((bytes = send(socket, frame_to_send.data, frame_length, 0)) < 0) {
              std::cerr << "bytes = " << bytes << std::endl;
              break;
@@ -65,8 +60,6 @@ void play_to_network(int socket, int thread_id/*, VideoCapture cap*/) {
 
 int main(int argc, char** argv)
 {
-
-    //networking stuff
     int local_socket;
     int remote_socket;
     int port = 8886;
@@ -114,14 +107,15 @@ int main(int argc, char** argv)
             exit(1);
         }
         std::cout << "Connection accepted" << std::endl;
-        assert(cap.isOpened());
+
         std::thread t0(play_to_network, remote_socket, 0/*, cap*/);
-//        std::thread t1(1, play_to_network, remote_socket/*, cap*/);
+        std::thread t1(play_to_network, remote_socket, 1/*, cap*/);
         t0.join();
-//        t1.join();
+        t1.join();
 
     }
     close(remote_socket);
+    close(local_socket);
 
     return 0;
 }
