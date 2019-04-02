@@ -30,21 +30,32 @@ int main(int argc, char** argv)
 
     if ((sock = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
         std::cerr << "socket() failed" << std::endl;
+        exit(-1);
     }
+
+    struct timeval tv;
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
 
     server_addr.sin_family = PF_INET;
     server_addr.sin_addr.s_addr = inet_addr(server_ip);
     server_addr.sin_port = htons(serverPort);
 
-    if (connect(sock, (sockaddr*)&server_addr, addrLen) < 0) {
-        std::cerr << "connect() failed!" << std::endl;
+    while (1) {
+        if (connect(sock, (sockaddr*)&server_addr, addrLen) < 0) {
+            std::cerr << "connect() failed! retry after 1 sec" << std::endl;
+            sleep(1);
+            continue;
+        }
+        break;
     }
 
     Mat frame = Mat::zeros(360 , 640, CV_8UC3);
     int frame_length = frame.total() * frame.elemSize();
     uchar *data_ptr = frame.data;
 
-    //make img continuous
+    // make frame continuous
     if (!frame.isContinuous()) {
           frame = frame.clone();
     }
@@ -55,20 +66,18 @@ int main(int argc, char** argv)
 
     int bytes = 0;
     while (1) {
-//        std::cerr << "w";
-
         if ((bytes = recv(sock, data_ptr, frame_length , MSG_WAITALL)) == -1) {
-            std::cerr << "recv failed, received bytes = " << bytes << std::endl;
+            std::cerr << "received bytes = " << bytes << ", recv didn't receive anything for 1 sec. Video seems to be over" << std::endl;
+            break;
         }
 
         cv::imshow("CV Video Client", frame);
-
         if (char key = (char)cv::waitKey(25)) {
-//            std::cerr << "waiting is over\n";
             if (key == 27 || key == 'q')
                 break;
         }
     }
+    destroyAllWindows();
 
     close(sock);
 
