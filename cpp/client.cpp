@@ -10,7 +10,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-using namespace cv;
 
 int main(int argc, char** argv)
 {
@@ -18,11 +17,12 @@ int main(int argc, char** argv)
     char* server_ip;
     int serverPort;
 
-    if (argc < 3) {
+    if (argc != 3) {
            std::cerr << "Usage: cv_video_cli <serverIP> <serverPort> " << std::endl;
+           exit(-1);
     }
 
-    server_ip   = argv[1];
+    server_ip = argv[1];
     serverPort = atoi(argv[2]);
 
     struct  sockaddr_in server_addr;
@@ -33,10 +33,10 @@ int main(int argc, char** argv)
         exit(-1);
     }
 
-    struct timeval tv;
-    tv.tv_sec = 1;
-    tv.tv_usec = 0;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
+    struct timeval timeout_video_is_over;
+    timeout_video_is_over.tv_sec = 1;
+    timeout_video_is_over.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout_video_is_over, sizeof timeout_video_is_over);
 
     server_addr.sin_family = PF_INET;
     server_addr.sin_addr.s_addr = inet_addr(server_ip);
@@ -47,11 +47,13 @@ int main(int argc, char** argv)
             std::cerr << "connect() failed! retry after 1 sec" << std::endl;
             sleep(1);
             continue;
+        } else {
+            std::cerr << "connected successfully" << std::endl;
         }
         break;
     }
 
-    Mat frame = Mat::zeros(360 , 640, CV_8UC3);
+    cv::Mat frame = cv::Mat::zeros(360 , 640, CV_8UC3);
     int frame_length = frame.total() * frame.elemSize();
     uchar *data_ptr = frame.data;
 
@@ -60,9 +62,7 @@ int main(int argc, char** argv)
           frame = frame.clone();
     }
 
-    std::cout << "Image Size:" << frame_length << std::endl;
-
-    namedWindow("CV Video Client", 1);
+    cv::namedWindow("CV Video Client", 1);
 
     int bytes = 0;
     while (1) {
@@ -77,7 +77,7 @@ int main(int argc, char** argv)
                 break;
         }
     }
-    destroyAllWindows();
+    cv::destroyAllWindows();
 
     close(sock);
 

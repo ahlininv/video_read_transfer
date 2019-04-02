@@ -16,20 +16,19 @@
 #include <mutex>
 #include <deque>
 
-using namespace cv;
-
 const size_t sending_threads_num = 2;
 const std::string default_filename = "./../../python/tests/test_video.avi";
 int default_port = 8886;
 int max_queue_size = 5;
 
-typedef std::deque< std::shared_ptr<Mat> > FrameQueue;
+typedef std::deque< std::shared_ptr<cv::Mat> > FrameQueue;
 
 std::mutex frame_queues_guard;
  std::vector<FrameQueue> frame_queues;
 
+
 void read_file(const std::string& filename) {
-    VideoCapture source(filename);
+    cv::VideoCapture source(filename);
 
     assert(frame_queues.size() == sending_threads_num);
 
@@ -48,11 +47,11 @@ void read_file(const std::string& filename) {
                 continue;
         }
 
-        std::shared_ptr<Mat> frame(new Mat());
+        std::shared_ptr<cv::Mat> frame(new cv::Mat());
         bool ret = source.read(*frame);
         if (!ret && frame->empty()) {
             std::cerr << "Video is over\n";
-            stop_now = true; // wait putting empty "flushing frame" to the queue
+            stop_now = true; // wait putting empty "deactivation frame" to the queue to stop other threads
         }
 
         {
@@ -70,7 +69,6 @@ void read_file(const std::string& filename) {
         ++timestamp;
     }
     source.release();
-    std::cerr << "Thread read_file finished!\n";
 }
 
 
@@ -81,10 +79,9 @@ void play_to_network(int socket, int debug_thread_id) {
         if (frame_queues[debug_thread_id].empty())
             continue;
 
-        std::cerr << "thread " << debug_thread_id << "reads frame from queue\n";
-        std::shared_ptr<Mat> frame_to_send = frame_queues[debug_thread_id].front();
+        std::shared_ptr<cv::Mat> frame_to_send = frame_queues[debug_thread_id].front();
         frame_queues[debug_thread_id].pop_front();
-        if (frame_to_send->empty()) // means "flushing packet"
+        if (frame_to_send->empty()) // means "deactivation packet"
             break;
 
         int frame_length = frame_to_send->total() * frame_to_send->elemSize();
@@ -93,7 +90,6 @@ void play_to_network(int socket, int debug_thread_id) {
              break;
         }
     }
-    std::cerr << "Finished thread play_to_network " << debug_thread_id << "\n";
 }
 
 
@@ -116,7 +112,7 @@ int main(int argc, char** argv)
           exit(1);
     }
 
-    if (argc == 2) port = atoi(argv[1]);
+    if (argc >= 2) port = atoi(argv[1]);
     if (argc == 3) filename = argv[2];
 
     local_socket = socket(AF_INET , SOCK_STREAM , 0);
@@ -133,22 +129,19 @@ int main(int argc, char** argv)
          exit(1);
     }
 
-    //Listening
     listen(local_socket , 3);
-
     std::cout <<  "Waiting for connections...\n"
               <<  "Server Port:" << port << std::endl;
-
 
     for (size_t i = 0; i < sending_threads_num; ++i) {
         std::lock_guard<std::mutex> lock(frame_queues_guard);
         frame_queues.push_back(FrameQueue());
     }
 
-//    std::vector<std::thread> sending_threads;
+    std::vector<std::thread> sending_threads;
 
-    // support now only 1 client, ignore other connections when it is busy
-    while(1) {
+    // support now only 1 client, don't assume simultaneous connections from multiple clients.
+    while (1) {
         remote_socket = accept(local_socket, (struct sockaddr *)&remote_addr, (socklen_t*)&addr_len);
 
         if (remote_socket < 0) {
@@ -159,26 +152,22 @@ int main(int argc, char** argv)
 
         std::thread read_thread(read_file, filename);
 
-//        for (size_t i = 0; i < sending_threads_num; ++i) {
-//            assert(frame_queues.size() > i);
-//            assert(sending_threads.size() == i);
-//            std::thread t(play_to_network, remote_socket, frame_queues[i], (int)i);
-//            sending_threads.push_back(std::move(t));
-//        }
+        for (size_t i = 0; i < sending_threads_num; ++i) {
+            assert(frame_queues.size() > i);
+            assert(sending_threads.size() == i);
+            std::thread t(play_to_network, remote_socket, (int)i);
+            sending_threads.push_back(std::move(t));
+        }
 
-//        for (size_t i = 0; i < sending_threads_num; ++i) {
-//            sending_threads[i].join();
-//        }
+        for (size_t i = 0; i < sending_threads_num; ++i) {
+            sending_threads[i].join();
+        }
+        sending_threads.clear();
 
-        assert(frame_queues.size() == sending_threads_num);
-        std::thread t0(play_to_network, remote_socket/*, frame_queues[0]*/, 0);
-        std::thread t1(play_to_network, remote_socket/*, frame_queues[1]*/, 1);
-
-        t1.join();
-        t0.join();
         read_thread.join();
-        std::cerr << "All threads joined, wait for new connections\n";
+        std::cerr << "Wait for new connections\n";
     }
+
     close(remote_socket);
     close(local_socket);
 
